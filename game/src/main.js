@@ -109,6 +109,7 @@ function startMatch() {
   spawnRound();
   rounds.state.roundReset = false;
   matchEnded = false;
+  lastAudioPhase = '';
 }
 
 function restart() {
@@ -135,7 +136,7 @@ function onLockChange(locked) {
     audio.unlock();
     hud.hideOverlay();
   } else if (buy.isOpen()) {
-    buy.open();
+    return;
   } else if (rounds.state.matchOver) {
     hud.showOverlay(rounds.state.winner === 'player' ? 'win' : 'loss', rounds.state);
   } else {
@@ -160,7 +161,7 @@ function shoot(spread) {
   const hit = raycaster.intersectObjects(shootables, false)[0];
   shotEndpoint.copy(camera.position).addScaledVector(direction, hit ? hit.distance : 44);
   playerMuzzle.set(0.24, -0.18, -0.95).applyMatrix4(camera.matrixWorld);
-  effects.addTracer(playerMuzzle, shotEndpoint, 'tracer');
+  effects.addTracer(playerMuzzle, shotEndpoint);
   if (hit && hit.object.userData.bot) {
     incomingDirection.copy(direction).negate();
     const killed = bots.damage(

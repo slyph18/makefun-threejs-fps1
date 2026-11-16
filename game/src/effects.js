@@ -50,7 +50,7 @@ export function createEffects(scene) {
   let puffCursor = 0;
   const tracerMidpoint = new THREE.Vector3();
 
-  function addTracer(origin, target, colorName) {
+  function addTracer(origin, target) {
     const tracer = tracerMeshes[tracerCursor];
     tracerCursor = (tracerCursor + 1) % TRACER_COUNT;
     tracerMidpoint.addVectors(origin, target).multiplyScalar(0.5);

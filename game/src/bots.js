@@ -310,7 +310,7 @@ export function createBots(scene, random) {
     if (hits.length > 0) shotEndpoint.copy(hits[0].point);
     else shotEndpoint.copy(rayOrigin).addScaledVector(shotDirection, SHOT_RANGE);
     muzzlePosition.set(0.2, 1.02, -0.54).applyMatrix4(item.group.matrixWorld);
-    effects.addTracer(muzzlePosition, shotEndpoint, 'tracer');
+    effects.addTracer(muzzlePosition, shotEndpoint);
     effects.addPuff(shotEndpoint);
     audio.gunshot(distance);
     item.muzzle = MUZZLE_TIME;

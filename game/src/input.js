@@ -37,7 +37,12 @@ export function createInput(canvas, onLockChange) {
   return {
     state,
     requestLock() {
-      canvas.requestPointerLock();
+      try {
+        const request = canvas.requestPointerLock();
+        if (request?.catch) request.catch(() => {});
+      } catch (error) {
+        console.warn('Pointer lock was unavailable.', error);
+      }
     },
     takeLook() {
       look.x = state.lookX;

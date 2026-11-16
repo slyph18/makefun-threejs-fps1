@@ -64,6 +64,13 @@ export function createBuyMenu({ arsenal, economy, onClose }) {
     return !arsenal.state.owned[item.id];
   }
 
+  menu.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' || event.key === 'b' || event.key === 'B') {
+      event.preventDefault();
+      close();
+    }
+  });
+
   function render() {
     moneyValue.textContent = `Funds: $${economy.state.money}`;
     for (const item of ITEMS) {
@@ -98,15 +105,5 @@ export function createBuyMenu({ arsenal, economy, onClose }) {
       if (menu.hidden) open();
       else close();
     },
-    hide() {
-      menu.hidden = true;
-    },
   };
-
-  menu.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape' || event.key === 'b' || event.key === 'B') {
-      event.preventDefault();
-      close();
-    }
-  });
 }

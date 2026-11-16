@@ -13,18 +13,18 @@ const COPY = {
   },
   win: {
     title: 'Operation Won',
-    copy: 'Three rounds held. The corridor is clear.',
+    copy: 'Three rounds secured. The corridor is clear.',
     action: 'Play again',
   },
   loss: {
     title: 'Operation Lost',
-    copy: 'Vantage took the corridor. Regroup and try again.',
+    copy: 'Vantage won three rounds. Regroup and try again.',
     action: 'Play again',
   },
 };
 
 const PHASES = {
-  buy: 'Buy',
+  buy: 'Buy Phase',
   combat: 'Combat',
   roundEnd: 'Round Over',
   idle: 'Ready',

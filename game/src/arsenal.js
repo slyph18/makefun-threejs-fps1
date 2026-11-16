@@ -145,7 +145,7 @@ export function createArsenal(scene) {
     state.reloadLeft = 0;
     state.grenades = 0;
     state.grenadeCooldown = 0;
-    state.bomb.carried = true;
+    state.bomb.carried = true; // re-asserted each round start; field kept in initial state below
     state.bomb.planted = false;
     state.bomb.progress = 0;
     state.bomb.fuse = BOMB_FUSE;
@@ -276,8 +276,5 @@ export function createArsenal(scene) {
     updateBomb,
     bombZone: BOMB_ZONE,
     bombZoneRadius: BOMB_ZONE_RADIUS,
-    weaponById(id) {
-      return WEAPONS[id];
-    },
   };
 }

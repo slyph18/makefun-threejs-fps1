@@ -1,5 +1,6 @@
 // Procedural WebAudio feedback: no external assets and no simulation state.
 const MAX_GAIN = 0.28;
+const AudioContextClass = window.AudioContext || window.webkitAudioContext;
 
 export function createAudio() {
   let context = null;
@@ -13,8 +14,9 @@ export function createAudio() {
   }
 
   function ensureContext() {
+    if (!AudioContextClass) return null;
     if (!context) {
-      context = new AudioContext();
+      context = new AudioContextClass();
       master = context.createGain();
       master.gain.value = MAX_GAIN;
       master.connect(context.destination);
@@ -34,7 +36,7 @@ export function createAudio() {
   }
 
   function playNoise({ duration, gain, frequency, quality = 2 }) {
-    if (context?.state !== 'running') return;
+    if (!context || context.state !== 'running') return;
     const source = context.createBufferSource();
     const filter = context.createBiquadFilter();
     const output = context.createGain();
@@ -56,7 +58,7 @@ export function createAudio() {
   }
 
   function playTone({ type = 'sine', start, end, duration, gain, delay = 0 }) {
-    if (context?.state !== 'running') return;
+    if (!context || context.state !== 'running') return;
     const oscillator = context.createOscillator();
     const output = context.createGain();
     const startTime = now() + delay;
@@ -77,7 +79,8 @@ export function createAudio() {
   return {
     unlock() {
       const audioContext = ensureContext();
-      if (audioContext.state !== 'running') audioContext.resume();
+      if (!audioContext || audioContext.state === 'running') return;
+      Promise.resolve(audioContext.resume()).catch(() => {});
     },
     gunshot(distance = 0) {
       const falloff = 1 / (1 + distance * 0.075);
