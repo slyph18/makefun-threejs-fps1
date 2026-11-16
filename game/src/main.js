@@ -1,6 +1,6 @@
-// Boot and the one loop: a fixed 60 Hz simulation feeding a render at the display's rate.
-// ?shot=start|play|end with &seed=N sets up a deterministic frame for a capture, renders it twice,
-// then freezes it and sets window.__shotReady.
+// Boot the match and run one fixed-step simulation loop. The ?shot capture mode stages a
+// deterministic frame, paints it twice, sets window.__shotReady, then freezes simulation.
+
 import * as THREE from 'three';
 import { PALETTE } from './palette.js';
 import { createWorld } from './world.js';
@@ -21,16 +21,16 @@ const params = new URLSearchParams(window.location.search);
 const shot = params.get('shot');
 const seed = Number.parseInt(params.get('seed') ?? '1', 10) || 1;
 
-function mulberry32(initial) {
-  let a = initial;
+function mulberry32(initialSeed) {
+  let state = initialSeed;
   return function random() {
-    a |= 0;
-    a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    state = (state + 0x6d2b79f5) | 0;
+    let mixed = Math.imul(state ^ (state >>> 15), 1 | state);
+    mixed = (mixed + Math.imul(mixed ^ (mixed >>> 7), 61 | mixed)) ^ mixed;
+    return ((mixed ^ (mixed >>> 14)) >>> 0) / 4294967296;
   };
 }
+
 const random = mulberry32(seed);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
@@ -66,20 +66,21 @@ const buy = createBuyMenu({
   },
 });
 const input = createInput(renderer.domElement, onLockChange);
+const shootables = world.shootables.concat(bots.hitMeshes);
+
 const raycaster = new THREE.Raycaster();
 raycaster.far = 80;
-const shootables = world.shootables.concat(bots.hitMeshes);
-const direction = new THREE.Vector3();
+const cameraDirection = new THREE.Vector3();
 const playerMuzzle = new THREE.Vector3();
 const shotEndpoint = new THREE.Vector3();
 const incomingDirection = new THREE.Vector3();
+const throwOrigin = new THREE.Vector3();
+const throwDirection = new THREE.Vector3();
 
 const body = player.state;
 const markerHoldMs = shot ? 4000 : 90;
-const throwOrigin = new THREE.Vector3();
-const throwDirection = new THREE.Vector3();
 const heldKeys = new Set();
-let lastPromptSeconds = -1;
+let lastPromptTick = -1;
 let combatActive = false;
 let frozen = false;
 let started = false;
@@ -99,12 +100,16 @@ hud.onPlay(() => {
   input.requestLock();
 });
 
-function startMatch() {
-  economy.resetMatch();
+function resetLoadout() {
   arsenal.state.owned.rifle = false;
   arsenal.state.owned.marksman = false;
   arsenal.state.armor = false;
   arsenal.state.active = 'pistol';
+}
+
+function startMatch() {
+  economy.resetMatch();
+  resetLoadout();
   rounds.beginMatch();
   spawnRound();
   rounds.state.roundReset = false;
@@ -121,12 +126,16 @@ function spawnRound() {
   bots.reset();
   arsenal.beginRound();
   combatActive = false;
-  hud.setAmmo(arsenal.currentAmmo().mag, arsenal.currentAmmo().reserve);
-  hud.setEconomy(economy.state.money, arsenal.state.grenades);
-  hud.setLoadout(arsenal.current().name, arsenal.state.armor);
+  syncHudState();
   hud.setHealth(body.health);
   hud.setMatch(rounds.state.round, rounds.state.playerWins, rounds.state.botWins, rounds.state.phase, 0);
   hud.setRoundOutcome(rounds.state.lastRoundWinner, rounds.state.phase, rounds.state.lastRoundSummary);
+}
+
+function syncHudState() {
+  hud.setAmmo(arsenal.currentAmmo().mag, arsenal.currentAmmo().reserve);
+  hud.setEconomy(economy.state.money, arsenal.state.grenades);
+  hud.setLoadout(arsenal.current().name, arsenal.state.armor);
 }
 
 function onLockChange(locked) {
@@ -151,19 +160,21 @@ function syncCamera() {
 
 function shoot(spread) {
   if (!weapon.takeRound()) return false;
-  camera.getWorldDirection(direction);
-  direction.x += (random() * 2 - 1) * spread;
-  direction.y += (random() * 2 - 1) * spread;
-  direction.z += (random() * 2 - 1) * spread;
-  direction.normalize();
+  camera.getWorldDirection(cameraDirection);
+  cameraDirection.x += (random() * 2 - 1) * spread;
+  cameraDirection.y += (random() * 2 - 1) * spread;
+  cameraDirection.z += (random() * 2 - 1) * spread;
+  cameraDirection.normalize();
+
   scene.updateMatrixWorld(true);
-  raycaster.set(camera.position, direction);
+  raycaster.set(camera.position, cameraDirection);
   const hit = raycaster.intersectObjects(shootables, false)[0];
-  shotEndpoint.copy(camera.position).addScaledVector(direction, hit ? hit.distance : 44);
+  shotEndpoint.copy(camera.position).addScaledVector(cameraDirection, hit ? hit.distance : 44);
   playerMuzzle.set(0.24, -0.18, -0.95).applyMatrix4(camera.matrixWorld);
   effects.addTracer(playerMuzzle, shotEndpoint);
+
   if (hit && hit.object.userData.bot) {
-    incomingDirection.copy(direction).negate();
+    incomingDirection.copy(cameraDirection).negate();
     const killed = bots.damage(
       hit.object,
       weapon.damage(hit.object.userData.part),
@@ -174,11 +185,9 @@ function shoot(spread) {
       world.shootables,
     );
     hud.hitMarker(killed, markerHoldMs);
-    if (killed) {
-      hud.killConfirmed(economy.addKillReward());
-      hud.setEconomy(economy.state.money, arsenal.state.grenades);
-    }
+    if (killed) awardKill();
   }
+
   weapon.pullTrigger();
   player.recoil(0.009 + random() * 0.004, (random() * 2 - 1) * 0.004);
   hud.setAmmo(arsenal.currentAmmo().mag, arsenal.currentAmmo().reserve);
@@ -186,17 +195,18 @@ function shoot(spread) {
   return true;
 }
 
+function awardKill() {
+  hud.killConfirmed(economy.addKillReward());
+  hud.setEconomy(economy.state.money, arsenal.state.grenades);
+}
+
 function damagePlayer(amount, shooterX = 0, shooterZ = 0) {
-  player.damage(arsenal.state.armor ? Math.ceil(amount / 2) : amount);
+  const reducedDamage = arsenal.state.armor ? Math.ceil(amount / 2) : amount;
+  player.damage(reducedDamage);
   const directionX = shooterX - body.position.x;
   const directionZ = shooterZ - body.position.z;
   hud.damageIndicator(Math.atan2(directionX, -directionZ));
   hud.setHealth(body.health);
-}
-
-function onGrenadeKill() {
-  hud.killConfirmed(economy.addKillReward());
-  hud.setEconomy(economy.state.money, arsenal.state.grenades);
 }
 
 function keyWasPressed(code) {
@@ -216,13 +226,12 @@ function handleRoundReset() {
 }
 
 function handleMatchOver() {
-  if (rounds.state.matchOver && !matchEnded) {
-    matchEnded = true;
-    awardRoundEconomy();
-    hud.showOverlay(rounds.state.winner === 'player' ? 'win' : 'loss', rounds.state);
-    hud.setEconomy(economy.state.money, arsenal.state.grenades);
-    if (document.pointerLockElement) document.exitPointerLock();
-  }
+  if (!rounds.state.matchOver || matchEnded) return;
+  matchEnded = true;
+  awardRoundEconomy();
+  hud.showOverlay(rounds.state.winner === 'player' ? 'win' : 'loss', rounds.state);
+  hud.setEconomy(economy.state.money, arsenal.state.grenades);
+  if (document.pointerLockElement) document.exitPointerLock();
 }
 
 function startNextRound() {
@@ -243,6 +252,7 @@ function handleControls() {
     buy.toggle();
     if (buy.isOpen() && document.pointerLockElement) document.exitPointerLock();
   }
+
   if (combatActive && !buy.isOpen()) {
     if (keyWasPressed('Digit1')) arsenal.selectWeapon('pistol');
     if (keyWasPressed('Digit2')) arsenal.selectWeapon('rifle');
@@ -255,8 +265,11 @@ function handleControls() {
       }
     }
   }
+
   for (const key of keys) heldKeys.add(key);
-  for (const key of heldKeys) if (!keys.has(key)) heldKeys.delete(key);
+  for (const key of heldKeys) {
+    if (!keys.has(key)) heldKeys.delete(key);
+  }
 }
 
 function step(dt) {
@@ -271,31 +284,48 @@ function step(dt) {
   }
 
   handleRoundReset();
-
   combatActive = rounds.state.phase === 'combat';
+
   if (combatActive) {
     player.step(dt, input.state.keys);
   } else {
     body.velocity.set(0, 0, 0);
   }
+
   weapon.step(dt, player.groundSpeed());
-  bots.step(dt, body, world.shootables, combatActive, damagePlayer, world.cover, effects, rounds.pressure(), audio);
+  bots.step(
+    dt,
+    body,
+    world.shootables,
+    combatActive,
+    damagePlayer,
+    world.cover,
+    effects,
+    rounds.pressure(),
+    audio,
+  );
+
   if (combatActive) {
-    arsenal.updateGrenades(dt, bots.items, onGrenadeKill);
+    arsenal.updateGrenades(dt, bots.items, awardKill);
     arsenal.updateBomb(dt, body.position, input.state.keys.has('KeyE'));
     if (arsenal.state.bomb.planted) audio.bombTick(dt, arsenal.state.bomb.fuse);
   }
-  rounds.step(dt, body.health > 0, bots.remaining(), arsenal.state.bomb.outcome, arsenal.state.bomb.planted);
+
+  rounds.step(
+    dt,
+    body.health > 0,
+    bots.remaining(),
+    arsenal.state.bomb.outcome,
+    arsenal.state.bomb.planted,
+  );
   if (previousPhase === 'buy' && rounds.state.phase === 'combat' && buy.isOpen()) buy.close();
   effects.step(dt);
   playPhaseAudio();
-
   handleMatchOver();
 }
 
 function updateHud() {
-  hud.setAmmo(arsenal.currentAmmo().mag, arsenal.currentAmmo().reserve);
-  hud.setEconomy(economy.state.money, arsenal.state.grenades);
+  syncHudState();
   hud.setMatch(
     rounds.state.round,
     rounds.state.playerWins,
@@ -303,37 +333,40 @@ function updateHud() {
     rounds.state.phase,
     Math.ceil(rounds.remainingTime()),
   );
-  hud.setLoadout(arsenal.current().name, arsenal.state.armor);
   hud.setRoundOutcome(rounds.state.lastRoundWinner, rounds.state.phase, rounds.state.lastRoundSummary);
+
   const bomb = arsenal.state.bomb;
   if (rounds.state.phase === 'buy') {
-    const seconds = Math.ceil(rounds.remainingTime());
-    if (seconds !== lastPromptSeconds) {
-      lastPromptSeconds = seconds;
-      hud.setBombPrompt(`Press B to buy — ${seconds}s`);
-    }
+    updateBombPrompt(`Press B to buy — ${Math.ceil(rounds.remainingTime())}s`);
   } else if (bomb.planted) {
-    const seconds = Math.ceil(bomb.fuse);
-    if (seconds !== lastPromptSeconds) {
-      lastPromptSeconds = seconds;
-      hud.setBombPrompt(`Detonation — ${seconds}s`);
-    }
-  } else if (combatActive && body.position.distanceTo(arsenal.bombZone) <= arsenal.bombZoneRadius) {
+    updateBombPrompt(`Detonation — ${Math.ceil(bomb.fuse)}s`);
+  } else if (
+    combatActive
+    && body.position.distanceTo(arsenal.bombZone) <= arsenal.bombZoneRadius
+  ) {
     const progressTick = Math.floor(bomb.progress * 10);
-    if (progressTick !== lastPromptSeconds) {
-      lastPromptSeconds = progressTick;
-      hud.setBombPrompt(`Hold E — plant ${(progressTick / 10).toFixed(1)}/3.0s`);
+    const prompt = `Hold E — plant ${(progressTick / 10).toFixed(1)}/3.0s`;
+    if (progressTick !== lastPromptTick) {
+      lastPromptTick = progressTick;
+      hud.setBombPrompt(prompt);
     }
   } else {
     hud.setBombPrompt('');
-    lastPromptSeconds = -1;
+    lastPromptTick = -1;
   }
+}
+
+function updateBombPrompt(prompt) {
+  if (lastPromptTick === prompt) return;
+  lastPromptTick = prompt;
+  hud.setBombPrompt(prompt);
 }
 
 function frame(now) {
   requestAnimationFrame(frame);
   const dt = Math.min((now - lastTime) / 1000, 0.1);
   lastTime = now;
+
   if (!frozen && input.state.locked) {
     const look = input.takeLook();
     player.look(look.x, look.y);
@@ -341,7 +374,10 @@ function frame(now) {
     if (input.state.firing && combatActive && weapon.ready()) {
       shoot(weapon.spread(player.groundSpeed()));
     }
-    if (input.state.keys.has('KeyR') && combatActive && keyWasPressed('KeyR') && weapon.reload()) audio.reload();
+    if (input.state.keys.has('KeyR') && combatActive && keyWasPressed('KeyR') && weapon.reload()) {
+      audio.reload();
+    }
+
     accumulator += dt;
     let steps = 0;
     while (accumulator >= FIXED_STEP && steps < 5) {
@@ -353,48 +389,12 @@ function frame(now) {
     syncCamera();
     updateHud();
   }
+
   renderer.render(scene, camera);
 }
 
 function settle(steps) {
   for (let index = 0; index < steps; index += 1) step(FIXED_STEP);
-}
-
-function runShot(name) {
-  hud.hideOverlay();
-  if (name === 'play' || name === 'end') {
-    rounds.state.phase = 'combat';
-    rounds.state.phaseTime = 0;
-  }
-  body.pitch = 0;
-  body.yaw = 0;
-  if (name === 'play' || name === 'end') {
-    body.position.set(0, 0, -5);
-    settle(20);
-    const count = name === 'play' ? 1 : bots.items.length;
-    for (let index = 0; index < count; index += 1) {
-      for (let burst = 0; burst < 3; burst += 1) {
-        const target = new THREE.Vector3(
-          bots.items[index].group.position.x,
-          bots.items[index].group.position.y + 1.53,
-          bots.items[index].group.position.z,
-        );
-        aimAt(target);
-        shoot(0);
-        if (burst < 2) settle(8);
-      }
-    }
-    if (name === 'play') settle(12);
-    else settle(40);
-  } else {
-    body.position.set(0.6, 0, 8.6);
-    settle(20);
-    aimAt(new THREE.Vector3(0, 1.5, -6));
-    hud.showOverlay('start', rounds.state);
-  }
-  updateHud();
-  hud.setAmmo(arsenal.currentAmmo().mag, arsenal.currentAmmo().reserve);
-  paintTwiceThenReady();
 }
 
 function aimAt(point) {
@@ -405,6 +405,40 @@ function aimAt(point) {
   body.yaw = Math.atan2(-dx, -dz);
   body.pitch = Math.asin(Math.max(-1, Math.min(1, dy / length)));
   syncCamera();
+}
+
+function runShot(name) {
+  hud.hideOverlay();
+  if (name === 'play' || name === 'end') {
+    rounds.state.phase = 'combat';
+    rounds.state.phaseTime = 0;
+  }
+  body.pitch = 0;
+  body.yaw = 0;
+
+  if (name === 'play' || name === 'end') {
+    body.position.set(0, 0, -5);
+    settle(20);
+    const count = name === 'play' ? 1 : bots.items.length;
+    for (let index = 0; index < count; index += 1) {
+      for (let burst = 0; burst < 3; burst += 1) {
+        const bot = bots.items[index].group;
+        aimAt(new THREE.Vector3(bot.position.x, bot.position.y + 1.53, bot.position.z));
+        shoot(0);
+        if (burst < 2) settle(8);
+      }
+    }
+    settle(name === 'play' ? 12 : 40);
+  } else {
+    body.position.set(0.6, 0, 8.6);
+    settle(20);
+    aimAt(new THREE.Vector3(0, 1.5, -6));
+    hud.showOverlay('start', rounds.state);
+  }
+
+  updateHud();
+  hud.setAmmo(arsenal.currentAmmo().mag, arsenal.currentAmmo().reserve);
+  paintTwiceThenReady();
 }
 
 function paintTwiceThenReady() {

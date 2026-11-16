@@ -1,14 +1,12 @@
-// Build the make.fun entry: copy the playable game and screenshots to the output
-// directory, then write the dossier required by the grader.
-
-import { cpSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { buildDossier } from './vendor/makefun-threejs.ts';
 
-const entryDirectory = dirname(fileURLToPath(import.meta.url));
-const outputDirectory = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
+const ENTRY_ROOT = dirname(fileURLToPath(import.meta.url));
+const OUTPUT_ROOT = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
+const ENTRY_DIRECTORIES = ['game', 'screenshots'] as const;
 
 const DOSSIER_CAPS = {
   text_max_bytes: 163_840,
@@ -20,23 +18,46 @@ const DOSSIER_CAPS = {
   game_max_bytes: 50_331_648,
 } as const;
 
-function copyEntryDirectory(name: string): void {
-  const source = join(entryDirectory, name);
+function assertDirectory(directoryPath: string, label: string): void {
+  if (!existsSync(directoryPath) || !statSync(directoryPath).isDirectory()) {
+    throw new Error(`Required ${label} directory is missing: ${directoryPath}`);
+  }
+}
 
-  if (!existsSync(source)) {
-    throw new Error(`Required entry directory is missing: ${name}`);
+function assertEntryFiles(): void {
+  const gameRoot = join(ENTRY_ROOT, 'game');
+  assertDirectory(gameRoot, 'game');
+  assertDirectory(join(ENTRY_ROOT, 'screenshots'), 'screenshots');
+
+  const requiredPaths = [
+    join(gameRoot, 'index.html'),
+    join(gameRoot, 'src', 'main.js'),
+  ];
+  const sourceDirectory = join(gameRoot, 'src');
+  assertDirectory(sourceDirectory, 'game/src');
+  for (const entryName of readdirSync(sourceDirectory, { withFileTypes: true })) {
+    if (entryName.isFile()) requiredPaths.push(join(sourceDirectory, entryName.name));
   }
 
-  cpSync(source, join(outputDirectory, name), { recursive: true });
+  for (const filePath of requiredPaths) {
+    if (!existsSync(filePath) || !statSync(filePath).isFile()) {
+      throw new Error(`Required entry file is missing: ${filePath}`);
+    }
+  }
 }
 
 function buildEntry(): void {
-  mkdirSync(outputDirectory, { recursive: true });
-  copyEntryDirectory('game');
-  copyEntryDirectory('screenshots');
+  assertEntryFiles();
+  mkdirSync(OUTPUT_ROOT, { recursive: true });
 
-  const dossier = buildDossier(outputDirectory, DOSSIER_CAPS);
-  writeFileSync(join(outputDirectory, 'dossier.json'), dossier);
+  for (const directoryName of ENTRY_DIRECTORIES) {
+    cpSync(join(ENTRY_ROOT, directoryName), join(OUTPUT_ROOT, directoryName), {
+      recursive: true,
+    });
+  }
+
+  const dossier = buildDossier(OUTPUT_ROOT, DOSSIER_CAPS);
+  writeFileSync(join(OUTPUT_ROOT, 'dossier.json'), dossier);
 }
 
 buildEntry();
