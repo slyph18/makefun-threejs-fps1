@@ -1,4 +1,6 @@
-// The player's purse persists across rounds; purchases are checked by buy.js.
+// The player's purse persists across rounds. buy.js validates purchases against this
+// state; match rewards and kill income are applied here.
+
 const START_MONEY = 800;
 const WIN_REWARD = 300;
 const LOSS_REWARD = 1400;
@@ -24,14 +26,19 @@ export function createEconomy() {
     return true;
   }
 
+  function lossReward() {
+    return Math.min(MAX_LOSS_REWARD, LOSS_REWARD + (state.lossStreak - 1) * LOSS_STREAK_BONUS);
+  }
+
   function awardRound(winner) {
     if (winner === 'player') {
       state.lossStreak = 0;
       addMoney(WIN_REWARD);
-    } else {
-      state.lossStreak += 1;
-      addMoney(Math.min(MAX_LOSS_REWARD, LOSS_REWARD + (state.lossStreak - 1) * LOSS_STREAK_BONUS));
+      return;
     }
+
+    state.lossStreak += 1;
+    addMoney(lossReward());
   }
 
   return {

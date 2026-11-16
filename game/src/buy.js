@@ -1,5 +1,6 @@
-// A DOM-only buy overlay shown during the buy phase. It reads game state and pushes one
-// purchase per click; simulation and rendering remain in the fixed-step loop.
+// A DOM-only buy overlay shown during the buy phase. It reads game state and applies one
+// purchase per click; simulation and rendering remain in main.js's fixed-step loop.
+
 const ITEMS = [
   { kind: 'weapon', id: 'pistol', label: 'Pistol', cost: 0, detail: 'Reliable sidearm' },
   { kind: 'weapon', id: 'rifle', label: 'Rifle', cost: 2700, detail: 'Fast automatic fire' },
@@ -7,6 +8,20 @@ const ITEMS = [
   { kind: 'grenade', id: 'frag', label: 'Frag Grenade', cost: 300, detail: '2 per round' },
   { kind: 'armor', id: 'armor', label: 'Armor', cost: 650, detail: 'Halves incoming damage' },
 ];
+
+const GRENADE_LIMIT = 2;
+
+function applyPurchase(item, arsenal) {
+  if (item.kind === 'weapon') {
+    arsenal.buyWeapon(item.id);
+    return;
+  }
+  if (item.kind === 'armor') {
+    arsenal.buyArmor();
+    return;
+  }
+  arsenal.buyGrenade();
+}
 
 export function createBuyMenu({ arsenal, economy, onClose }) {
   const menu = document.createElement('section');
@@ -43,25 +58,55 @@ export function createBuyMenu({ arsenal, economy, onClose }) {
       <span class="buy-detail">${item.detail}</span>
       <span class="buy-cost">$${item.cost}</span>
     `;
-    button.addEventListener('click', () => buy(item));
+    button.addEventListener('click', () => purchase(item));
     itemsHost.appendChild(button);
     buttons.set(item.id, button);
   }
 
-  function buy(item) {
-    if (!canBuy(item) || !economy.spend(item.cost)) return false;
-    if (item.kind === 'weapon') arsenal.buyWeapon(item.id);
-    else if (item.kind === 'armor') arsenal.buyArmor();
-    else arsenal.buyGrenade();
+  function isEligible(item) {
+    if (item.kind === 'grenade') return arsenal.state.grenades < GRENADE_LIMIT;
+    if (item.kind === 'armor') return !arsenal.state.armor;
+    return !arsenal.state.owned[item.id];
+  }
+
+  function canPurchase(item) {
+    return economy.state.money >= item.cost && isEligible(item);
+  }
+
+  function purchase(item) {
+    if (!canPurchase(item) || !economy.spend(item.cost)) return false;
+    applyPurchase(item, arsenal);
     render();
     return true;
   }
 
-  function canBuy(item) {
-    if (economy.state.money < item.cost) return false;
-    if (item.kind === 'grenade') return arsenal.state.grenades < 2;
-    if (item.kind === 'armor') return !arsenal.state.armor;
-    return !arsenal.state.owned[item.id];
+  function render() {
+    moneyValue.textContent = `Funds: $${economy.state.money}`;
+    for (const item of ITEMS) {
+      const button = buttons.get(item.id);
+      const affordable = canPurchase(item);
+      button.disabled = !affordable;
+      button.setAttribute('aria-disabled', affordable ? 'false' : 'true');
+      button.dataset.affordable = affordable ? 'true' : 'false';
+
+      if (item.kind === 'weapon') {
+        button.dataset.owned = arsenal.state.owned[item.id] ? 'true' : 'false';
+        button.dataset.active = arsenal.state.active === item.id ? 'true' : 'false';
+      }
+    }
+  }
+
+  function close() {
+    if (menu.hidden) return;
+    menu.hidden = true;
+    onClose();
+  }
+
+  function open() {
+    if (!menu.hidden) return;
+    render();
+    menu.hidden = false;
+    closeButton.focus();
   }
 
   menu.addEventListener('keydown', (event) => {
@@ -71,36 +116,12 @@ export function createBuyMenu({ arsenal, economy, onClose }) {
     }
   });
 
-  function render() {
-    moneyValue.textContent = `Funds: $${economy.state.money}`;
-    for (const item of ITEMS) {
-      const button = buttons.get(item.id);
-      const affordable = canBuy(item);
-      button.disabled = !affordable;
-      button.setAttribute('aria-disabled', affordable ? 'false' : 'true');
-      button.dataset.affordable = affordable ? 'true' : 'false';
-      if (item.kind === 'weapon') {
-        button.dataset.owned = arsenal.state.owned[item.id] ? 'true' : 'false';
-        button.dataset.active = arsenal.state.active === item.id ? 'true' : 'false';
-      }
-    }
-  }
-
   return {
     isOpen() {
       return !menu.hidden;
     },
-    open() {
-      if (!menu.hidden) return;
-      render();
-      menu.hidden = false;
-      closeButton.focus();
-    },
-    close() {
-      if (menu.hidden) return;
-      menu.hidden = true;
-      onClose();
-    },
+    open,
+    close,
     toggle() {
       if (menu.hidden) open();
       else close();

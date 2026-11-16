@@ -1,5 +1,6 @@
-// Player movement: acceleration, friction, gravity, crouch and jump, resolved as a box against
-// the world's colliders one axis at a time, so a wall never swallows the player.
+// Player movement: acceleration, friction, gravity, crouching, and jumping. The body is
+// resolved as a box against world colliders one axis at a time so walls cannot swallow it.
+
 import * as THREE from 'three';
 
 const RADIUS = 0.34;
@@ -16,6 +17,8 @@ const GRAVITY = 20;
 const JUMP_SPEED = 6.2;
 const STEP_HEIGHT = 0.34;
 const MAX_HEALTH = 100;
+const MAX_PITCH = 1.45;
+const MAX_FALL_SPEED = 30;
 
 export function createPlayer(colliders) {
   const player = {
@@ -30,24 +33,25 @@ export function createPlayer(colliders) {
     health: MAX_HEALTH,
   };
   const probe = new THREE.Box3();
-  const wish = new THREE.Vector3();
+  const moveDirection = new THREE.Vector3();
 
-  // lift keeps the feet and the crown out of the horizontal tests, so standing on the floor
-  // is not read as walking into a wall.
-  function overlaps(x, y, z, height, lift) {
+  function findCollision(x, y, z, height, lift) {
     probe.min.set(x - RADIUS, y + lift, z - RADIUS);
     probe.max.set(x + RADIUS, y + height - lift, z + RADIUS);
-    for (const collider of colliders) if (probe.intersectsBox(collider)) return collider;
+
+    for (const collider of colliders) {
+      if (probe.intersectsBox(collider)) return collider;
+    }
     return null;
   }
 
-  function look(dx, dy, sensitivity = 0.0022) {
-    player.yaw -= dx * sensitivity;
-    player.pitch = Math.max(-1.45, Math.min(1.45, player.pitch - dy * sensitivity));
+  function look(deltaX, deltaY, sensitivity = 0.0022) {
+    player.yaw -= deltaX * sensitivity;
+    player.pitch = Math.max(-MAX_PITCH, Math.min(MAX_PITCH, player.pitch - deltaY * sensitivity));
   }
 
   function recoil(pitchKick, yawKick) {
-    player.pitch = Math.min(1.45, player.pitch + pitchKick);
+    player.pitch = Math.min(MAX_PITCH, player.pitch + pitchKick);
     player.yaw += yawKick;
   }
 
@@ -69,35 +73,55 @@ export function createPlayer(colliders) {
     player.health = MAX_HEALTH;
   }
 
-  function step(dt, keys) {
-    const crouching = keys.has('ControlLeft') || keys.has('ControlRight') || keys.has('KeyC');
-    if (crouching && !player.crouching) {
+  function updateCrouch(keys) {
+    const crouchRequested = keys.has('ControlLeft') || keys.has('ControlRight') || keys.has('KeyC');
+    if (crouchRequested && !player.crouching) {
       player.crouching = true;
       player.height = CROUCH_HEIGHT;
-    } else if (!crouching && player.crouching && !overlaps(player.position.x, player.position.y, player.position.z, STAND_HEIGHT, 0.02)) {
+      return;
+    }
+
+    const standingBlocked = findCollision(
+      player.position.x,
+      player.position.y,
+      player.position.z,
+      STAND_HEIGHT,
+      0.02,
+    );
+    if (!crouchRequested && player.crouching && !standingBlocked) {
       player.crouching = false;
       player.height = STAND_HEIGHT;
     }
-    const eyeTarget = player.crouching ? CROUCH_EYE : STAND_EYE;
-    player.eye += (eyeTarget - player.eye) * Math.min(1, dt * 12);
+  }
 
+  function updateEye(dt) {
+    const targetEye = player.crouching ? CROUCH_EYE : STAND_EYE;
+    player.eye += (targetEye - player.eye) * Math.min(1, dt * 12);
+  }
+
+  function updateVelocity(dt, keys) {
     const forward = (keys.has('KeyW') ? 1 : 0) - (keys.has('KeyS') ? 1 : 0);
     const strafe = (keys.has('KeyD') ? 1 : 0) - (keys.has('KeyA') ? 1 : 0);
-    wish.set(0, 0, 0);
+    moveDirection.set(0, 0, 0);
+
     if (forward || strafe) {
-      const sin = Math.sin(player.yaw);
-      const cos = Math.cos(player.yaw);
-      wish.set(-sin * forward + cos * strafe, 0, -cos * forward - sin * strafe).normalize();
+      const yawSine = Math.sin(player.yaw);
+      const yawCosine = Math.cos(player.yaw);
+      moveDirection
+        .set(-yawSine * forward + yawCosine * strafe, 0, -yawCosine * forward - yawSine * strafe)
+        .normalize();
     }
 
     const speed = player.crouching ? CROUCH_SPEED : WALK_SPEED;
-    const blend = Math.min(1, (player.onGround ? GROUND_ACCEL : AIR_ACCEL) * dt / speed);
-    player.velocity.x += (wish.x * speed - player.velocity.x) * blend;
-    player.velocity.z += (wish.z * speed - player.velocity.z) * blend;
-    if (player.onGround && !wish.lengthSq()) {
-      const damp = Math.max(0, 1 - FRICTION * dt);
-      player.velocity.x *= damp;
-      player.velocity.z *= damp;
+    const acceleration = player.onGround ? GROUND_ACCEL : AIR_ACCEL;
+    const blend = Math.min(1, acceleration * dt / speed);
+    player.velocity.x += (moveDirection.x * speed - player.velocity.x) * blend;
+    player.velocity.z += (moveDirection.z * speed - player.velocity.z) * blend;
+
+    if (player.onGround && !moveDirection.lengthSq()) {
+      const damping = Math.max(0, 1 - FRICTION * dt);
+      player.velocity.x *= damping;
+      player.velocity.z *= damping;
     }
 
     if (keys.has('Space') && player.onGround) {
@@ -105,45 +129,66 @@ export function createPlayer(colliders) {
       player.onGround = false;
     }
     player.velocity.y -= GRAVITY * dt;
+  }
 
+  function moveHorizontally(dt) {
     const nextX = player.position.x + player.velocity.x * dt;
-    const xHit = overlaps(nextX, player.position.y, player.position.z, player.height, 0.04);
-    if (!xHit) {
+    const xCollision = findCollision(nextX, player.position.y, player.position.z, player.height, 0.04);
+    if (!xCollision) {
       player.position.x = nextX;
-    } else if (player.onGround && xHit.max.y - player.position.y <= STEP_HEIGHT) {
+    } else if (player.onGround && xCollision.max.y - player.position.y <= STEP_HEIGHT) {
       player.position.x = nextX;
-      player.position.y = xHit.max.y;
+      player.position.y = xCollision.max.y;
     } else {
       player.velocity.x = 0;
     }
+
     const nextZ = player.position.z + player.velocity.z * dt;
-    const zHit = overlaps(player.position.x, player.position.y, nextZ, player.height, 0.04);
-    if (!zHit) {
+    const zCollision = findCollision(player.position.x, player.position.y, nextZ, player.height, 0.04);
+    if (!zCollision) {
       player.position.z = nextZ;
-    } else if (player.onGround && zHit.max.y - player.position.y <= STEP_HEIGHT) {
+    } else if (player.onGround && zCollision.max.y - player.position.y <= STEP_HEIGHT) {
       player.position.z = nextZ;
-      player.position.y = zHit.max.y;
+      player.position.y = zCollision.max.y;
     } else {
       player.velocity.z = 0;
     }
+  }
 
+  function moveVertically(dt) {
     player.position.y += player.velocity.y * dt;
     player.onGround = false;
-    const hit = overlaps(player.position.x, player.position.y, player.position.z, player.height, 0);
-    if (hit && player.velocity.y <= 0) {
-      player.position.y = hit.max.y;
+    const collision = findCollision(
+      player.position.x,
+      player.position.y,
+      player.position.z,
+      player.height,
+      0,
+    );
+
+    if (collision && player.velocity.y <= 0) {
+      player.position.y = collision.max.y;
       player.velocity.y = 0;
       player.onGround = true;
-    } else if (hit) {
-      player.position.y = hit.min.y - player.height;
+    } else if (collision) {
+      player.position.y = collision.min.y - player.height;
       player.velocity.y = 0;
     }
+
     if (player.position.y < 0) {
       player.position.y = 0;
       player.velocity.y = 0;
       player.onGround = true;
     }
-    player.velocity.y = Math.max(-30, player.velocity.y);
+    player.velocity.y = Math.max(-MAX_FALL_SPEED, player.velocity.y);
+  }
+
+  function step(dt, keys) {
+    updateCrouch(keys);
+    updateEye(dt);
+    updateVelocity(dt, keys);
+    moveHorizontally(dt);
+    moveVertically(dt);
   }
 
   return {

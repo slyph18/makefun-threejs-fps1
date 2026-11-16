@@ -1,10 +1,12 @@
-// Match flow only: phase timing, round outcomes, and the first-to-three result. main.js
-// owns spawning; rounds.js advances state and publishes a one-line post-round summary.
+// Match flow only: phase timing, round outcomes, and the first-to-three result.
+// Spawning belongs to main.js; this module advances state and publishes a concise
+// one-line summary for the HUD after each round.
+
 const BUY_TIME = 7;
 const COMBAT_TIME = 75;
 const ROUND_END_TIME = 1.4;
 const WIN_TARGET = 3;
-const BOTS_TOTAL = 4;
+const BOT_COUNT = 4;
 
 export function createRounds() {
   const state = {
@@ -39,15 +41,21 @@ export function createRounds() {
 
   function finishRound(winner, summary) {
     state.lastRoundWinner = winner;
-    if (winner === 'player') state.playerWins += 1;
-    else state.botWins += 1;
+    if (winner === 'player') {
+      state.playerWins += 1;
+    } else {
+      state.botWins += 1;
+    }
     state.phase = 'roundEnd';
     state.phaseTime = 0;
     state.lastRoundSummary = summary;
   }
 
   function step(dt, playerAlive, botsRemaining, objectiveWinner = '', objectiveActive = false) {
-    if (!state.matchOver) state.phaseTime += dt;
+    if (!state.matchOver) {
+      state.phaseTime += dt;
+    }
+
     if (state.phase === 'buy') {
       if (state.phaseTime >= BUY_TIME) {
         state.phase = 'combat';
@@ -55,11 +63,12 @@ export function createRounds() {
       }
       return;
     }
+
     if (state.phase === 'combat') {
       if (objectiveWinner) {
         finishRound(objectiveWinner, 'Detonation confirmed at Site A.');
       } else if (botsRemaining === 0) {
-        finishRound('player', `Squad cleared — ${BOTS_TOTAL - botsRemaining}/4 bots down.`);
+        finishRound('player', `Squad cleared — ${BOT_COUNT - botsRemaining}/${BOT_COUNT} bots down.`);
       } else if (!objectiveActive && !playerAlive) {
         finishRound('bots', 'Player eliminated before detonation.');
       } else if (!objectiveActive && state.phaseTime >= COMBAT_TIME) {
@@ -67,6 +76,7 @@ export function createRounds() {
       }
       return;
     }
+
     if (state.phase === 'roundEnd' && state.phaseTime >= ROUND_END_TIME) {
       if (state.playerWins >= WIN_TARGET) {
         state.matchOver = true;
