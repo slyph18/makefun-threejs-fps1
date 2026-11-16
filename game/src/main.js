@@ -175,8 +175,7 @@ function shoot(spread) {
     );
     hud.hitMarker(killed, markerHoldMs);
     if (killed) {
-      economy.addKillReward();
-      hud.killConfirmed(economy.killReward());
+      hud.killConfirmed(economy.addKillReward());
       hud.setEconomy(economy.state.money, arsenal.state.grenades);
     }
   }
@@ -196,8 +195,7 @@ function damagePlayer(amount, shooterX = 0, shooterZ = 0) {
 }
 
 function onGrenadeKill() {
-  economy.addKillReward();
-  hud.killConfirmed(economy.killReward());
+  hud.killConfirmed(economy.addKillReward());
   hud.setEconomy(economy.state.money, arsenal.state.grenades);
 }
 
@@ -262,6 +260,8 @@ function handleControls() {
 }
 
 function step(dt) {
+  const previousPhase = rounds.state.phase;
+
   if (rounds.state.phase === 'roundEnd') {
     rounds.step(dt);
     effects.step(dt);
@@ -286,6 +286,7 @@ function step(dt) {
     if (arsenal.state.bomb.planted) audio.bombTick(dt, arsenal.state.bomb.fuse);
   }
   rounds.step(dt, body.health > 0, bots.remaining(), arsenal.state.bomb.outcome, arsenal.state.bomb.planted);
+  if (previousPhase === 'buy' && rounds.state.phase === 'combat' && buy.isOpen()) buy.close();
   effects.step(dt);
   playPhaseAudio();
 
@@ -305,17 +306,23 @@ function updateHud() {
   hud.setLoadout(arsenal.current().name, arsenal.state.armor);
   hud.setRoundOutcome(rounds.state.lastRoundWinner, rounds.state.phase);
   const bomb = arsenal.state.bomb;
-  if (bomb.planted) {
+  if (rounds.state.phase === 'buy') {
+    const seconds = Math.ceil(rounds.remainingTime());
+    if (seconds !== lastPromptSeconds) {
+      lastPromptSeconds = seconds;
+      hud.setBombPrompt(`Press B to buy — ${seconds}s`);
+    }
+  } else if (bomb.planted) {
     const seconds = Math.ceil(bomb.fuse);
     if (seconds !== lastPromptSeconds) {
       lastPromptSeconds = seconds;
-      hud.setBombPrompt(`Bomb detonates in ${seconds}s`);
+      hud.setBombPrompt(`Detonation — ${seconds}s`);
     }
   } else if (combatActive && body.position.distanceTo(arsenal.bombZone) <= arsenal.bombZoneRadius) {
     const progressTick = Math.floor(bomb.progress * 10);
     if (progressTick !== lastPromptSeconds) {
       lastPromptSeconds = progressTick;
-      hud.setBombPrompt(`Hold E to plant (${(progressTick / 10).toFixed(1)}/3s)`);
+      hud.setBombPrompt(`Hold E — plant ${(progressTick / 10).toFixed(1)}/3.0s`);
     }
   } else {
     hud.setBombPrompt('');

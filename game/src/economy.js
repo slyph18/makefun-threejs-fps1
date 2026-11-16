@@ -5,6 +5,7 @@ const LOSS_REWARD = 1400;
 const LOSS_STREAK_BONUS = 500;
 const KILL_REWARD = 300;
 const MAX_LOSS_REWARD = 3400;
+const MAX_MONEY = 16000;
 
 export function createEconomy() {
   const state = {
@@ -13,7 +14,8 @@ export function createEconomy() {
   };
 
   function addMoney(amount) {
-    state.money += amount;
+    state.money = Math.min(MAX_MONEY, state.money + amount);
+    return state.money;
   }
 
   function spend(cost) {
@@ -37,10 +39,7 @@ export function createEconomy() {
     spend,
     awardRound,
     addKillReward() {
-      addMoney(KILL_REWARD);
-    },
-    killReward() {
-      return KILL_REWARD;
+      return addMoney(KILL_REWARD);
     },
     resetMatch() {
       state.money = START_MONEY;

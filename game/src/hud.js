@@ -3,7 +3,7 @@
 const COPY = {
   start: {
     title: 'Steel Corridor',
-    copy: 'Hold the corridor against the Vantage squad. Win three rounds.',
+    copy: 'Buy gear, then defend Site A. First to three rounds wins.',
     action: 'Click to play',
   },
   paused: {
@@ -13,18 +13,18 @@ const COPY = {
   },
   win: {
     title: 'Operation Won',
-    copy: 'Three rounds secured. The corridor is clear.',
+    copy: 'Three rounds secured. Site A held.',
     action: 'Play again',
   },
   loss: {
     title: 'Operation Lost',
-    copy: 'Vantage won three rounds. Regroup and try again.',
+    copy: 'Vantage took three rounds. Regroup and try again.',
     action: 'Play again',
   },
 };
 
 const PHASES = {
-  buy: 'Buy Phase',
+  buy: 'Buy',
   combat: 'Combat',
   roundEnd: 'Round Over',
   idle: 'Ready',
@@ -113,7 +113,7 @@ export function createHud() {
       }
       if (armor !== lastArmor) {
         lastArmor = armor;
-        armorStatus.textContent = armor ? 'Armor +50%' : 'Armor —';
+        armorStatus.textContent = armor ? 'Armor 50%' : 'Armor —';
         armorStatus.classList.toggle('on', armor);
       }
     },
