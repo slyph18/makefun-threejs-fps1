@@ -1,5 +1,5 @@
-// Inventory, weapon numbers, grenades and the bomb objective. The model and effects stay in
-// weapon.js; simulation-facing state is initialized here and reused every round.
+// Player inventory, weapon performance, grenades, and the bomb objective.
+// Visual weapon models live in weapon.js; this module owns simulation state.
 import * as THREE from 'three';
 import { PALETTE } from './palette.js';
 
@@ -7,16 +7,37 @@ export const WEAPON_IDS = ['pistol', 'rifle', 'marksman'];
 
 const WEAPONS = {
   pistol: {
-    name: 'Pistol', cost: 0, damage: 25, fireGap: 0.23, reload: 1.25,
-    mag: 12, reserve: 48, spreadStill: 0.004, spreadMoving: 0.018,
+    name: 'Pistol',
+    cost: 0,
+    damage: 25,
+    fireGap: 0.23,
+    reload: 1.25,
+    mag: 12,
+    reserve: 48,
+    spreadStill: 0.004,
+    spreadMoving: 0.018,
   },
   rifle: {
-    name: 'Rifle', cost: 2700, damage: 34, fireGap: 0.096, reload: 1.9,
-    mag: 30, reserve: 90, spreadStill: 0.0022, spreadMoving: 0.028,
+    name: 'Rifle',
+    cost: 2700,
+    damage: 34,
+    fireGap: 0.096,
+    reload: 1.9,
+    mag: 30,
+    reserve: 90,
+    spreadStill: 0.0022,
+    spreadMoving: 0.028,
   },
   marksman: {
-    name: 'Marksman', cost: 4600, damage: 72, fireGap: 1.15, reload: 2.4,
-    mag: 8, reserve: 24, spreadStill: 0.0008, spreadMoving: 0.014,
+    name: 'Marksman',
+    cost: 4600,
+    damage: 72,
+    fireGap: 1.15,
+    reload: 2.4,
+    mag: 8,
+    reserve: 24,
+    spreadStill: 0.0008,
+    spreadMoving: 0.014,
   },
 };
 
@@ -26,6 +47,8 @@ const GRENADE_RADIUS = 4.8;
 const GRENADE_GRAVITY = 13;
 const GRENADE_THROW_SPEED = 13;
 const GRENADE_THROW_GAP = 0.65;
+const GRENADE_FUSE = 2.2;
+const GRENADE_REST_HEIGHT = 0.09;
 const EXPLOSION_TIME = 0.25;
 const BOMB_ZONE = new THREE.Vector3(-7.6, 0, -6.2);
 const BOMB_ZONE_RADIUS = 3.4;
@@ -37,7 +60,7 @@ export function createArsenal(scene) {
   const state = {
     active: 'pistol',
     owned: { pistol: true, rifle: false, marksman: false },
-    ammo: { pistol: { mag: WEAPONS.pistol.mag, reserve: WEAPONS.pistol.reserve } },
+    ammo: { pistol: createAmmo('pistol') },
     cooldown: 0,
     reloadLeft: 0,
     flash: 0,
@@ -55,52 +78,75 @@ export function createArsenal(scene) {
     },
   };
 
-  const bombMarker = new THREE.Mesh(
-    new THREE.RingGeometry(BOMB_ZONE_RADIUS - 0.2, BOMB_ZONE_RADIUS, 48),
-    new THREE.MeshBasicMaterial({
-      color: new THREE.Color(PALETTE.accent),
-      transparent: true,
-      opacity: 0.16,
-      side: THREE.DoubleSide,
-      depthWrite: false,
-    }),
-  );
-  bombMarker.rotation.x = -Math.PI / 2;
-  bombMarker.position.set(BOMB_ZONE.x, 0.04, BOMB_ZONE.z);
+  const bombMarker = createBombMarker();
   scene.add(bombMarker);
-
-  const bombMesh = new THREE.Mesh(
-    new THREE.BoxGeometry(0.36, 0.18, 0.24),
-    new THREE.MeshStandardMaterial({ color: new THREE.Color(PALETTE.ink), roughness: 0.45, metalness: 0.2 }),
-  );
-  bombMesh.visible = false;
+  const bombMesh = createBombMesh();
   scene.add(bombMesh);
+  const grenadeProjectiles = createGrenadeProjectiles();
+  for (const { mesh, explosion } of grenadeProjectiles) scene.add(mesh, explosion);
 
-  const grenadeMaterial = new THREE.MeshStandardMaterial({
-    color: new THREE.Color(PALETTE.hairline),
-    roughness: 0.5,
-    metalness: 0.25,
-  });
-  const explosionMaterial = new THREE.MeshBasicMaterial({
-    color: new THREE.Color(PALETTE.muted),
-    transparent: true,
-    opacity: 0.9,
-    depthWrite: false,
-  });
-  const grenades = [];
-  for (let index = 0; index < MAX_GRENADES; index += 1) {
-    const mesh = new THREE.Mesh(new THREE.SphereGeometry(0.09, 12, 8), grenadeMaterial);
+  function createAmmo(id) {
+    return { mag: WEAPONS[id].mag, reserve: WEAPONS[id].reserve };
+  }
+
+  function createBombMarker() {
+    const marker = new THREE.Mesh(
+      new THREE.RingGeometry(BOMB_ZONE_RADIUS - 0.2, BOMB_ZONE_RADIUS, 48),
+      new THREE.MeshBasicMaterial({
+        color: new THREE.Color(PALETTE.accent),
+        transparent: true,
+        opacity: 0.16,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      }),
+    );
+    marker.rotation.x = -Math.PI / 2;
+    marker.position.set(BOMB_ZONE.x, 0.04, BOMB_ZONE.z);
+    return marker;
+  }
+
+  function createBombMesh() {
+    const mesh = new THREE.Mesh(
+      new THREE.BoxGeometry(0.36, 0.18, 0.24),
+      new THREE.MeshStandardMaterial({
+        color: new THREE.Color(PALETTE.ink),
+        roughness: 0.45,
+        metalness: 0.2,
+      }),
+    );
     mesh.visible = false;
-    const explosion = new THREE.Mesh(new THREE.SphereGeometry(1, 16, 12), explosionMaterial.clone());
-    explosion.visible = false;
-    scene.add(mesh, explosion);
-    grenades.push({
-      mesh,
-      explosion,
-      velocity: new THREE.Vector3(),
-      life: 0,
-      explodeLeft: 0,
-      exploded: false,
+    return mesh;
+  }
+
+  function createGrenadeProjectiles() {
+    const material = new THREE.MeshStandardMaterial({
+      color: new THREE.Color(PALETTE.hairline),
+      roughness: 0.5,
+      metalness: 0.25,
+    });
+    const explosionMaterial = new THREE.MeshBasicMaterial({
+      color: new THREE.Color(PALETTE.muted),
+      transparent: true,
+      opacity: 0.9,
+      depthWrite: false,
+    });
+
+    return Array.from({ length: MAX_GRENADES }, () => {
+      const mesh = new THREE.Mesh(new THREE.SphereGeometry(0.09, 12, 8), material);
+      mesh.visible = false;
+      const explosion = new THREE.Mesh(
+        new THREE.SphereGeometry(1, 16, 12),
+        explosionMaterial.clone(),
+      );
+      explosion.visible = false;
+      return {
+        mesh,
+        explosion,
+        velocity: new THREE.Vector3(),
+        life: 0,
+        explodeLeft: 0,
+        exploded: false,
+      };
     });
   }
 
@@ -123,7 +169,7 @@ export function createArsenal(scene) {
   function buyWeapon(id) {
     if (!state.owned[id]) {
       state.owned[id] = true;
-      state.ammo[id] = { mag: WEAPONS[id].mag, reserve: WEAPONS[id].reserve };
+      state.ammo[id] = createAmmo(id);
     }
     state.active = id;
     state.reloadLeft = 0;
@@ -139,13 +185,13 @@ export function createArsenal(scene) {
 
   function beginRound() {
     for (const id of WEAPON_IDS) {
-      if (state.owned[id]) state.ammo[id] = { mag: WEAPONS[id].mag, reserve: WEAPONS[id].reserve };
+      if (state.owned[id]) state.ammo[id] = createAmmo(id);
     }
     state.cooldown = 0;
     state.reloadLeft = 0;
     state.grenades = 0;
     state.grenadeCooldown = 0;
-    state.bomb.carried = true; // re-asserted each round start; field kept in initial state below
+    state.bomb.carried = true;
     state.bomb.planted = false;
     state.bomb.progress = 0;
     state.bomb.fuse = BOMB_FUSE;
@@ -153,55 +199,39 @@ export function createArsenal(scene) {
     state.bomb.outcome = '';
     bombMesh.visible = false;
     bombMarker.material.opacity = 0.16;
-    for (const grenade of grenades) {
-      grenade.mesh.visible = false;
-      grenade.explosion.visible = false;
-      grenade.life = 0;
-      grenade.explodeLeft = 0;
-      grenade.exploded = false;
+
+    for (const projectile of grenadeProjectiles) {
+      projectile.mesh.visible = false;
+      projectile.explosion.visible = false;
+      projectile.life = 0;
+      projectile.explodeLeft = 0;
+      projectile.exploded = false;
     }
   }
 
   function throwGrenade(origin, direction) {
     if (state.grenades <= 0 || state.grenadeCooldown > 0) return false;
-    const grenade = grenades[0].mesh.visible || grenades[0].exploded
-      ? grenades[1]
-      : grenades[0];
-    grenade.mesh.visible = true;
-    grenade.mesh.position.copy(origin);
-    grenade.velocity.copy(direction).multiplyScalar(GRENADE_THROW_SPEED);
-    grenade.velocity.y += 2.6;
-    grenade.life = 0;
-    grenade.exploded = false;
-    grenade.explodeLeft = 0;
-    grenade.explosion.visible = false;
+
+    const first = grenadeProjectiles[0];
+    const second = grenadeProjectiles[1];
+    const projectile = first.mesh.visible || first.exploded ? second : first;
+    projectile.mesh.visible = true;
+    projectile.mesh.position.copy(origin);
+    projectile.velocity.copy(direction).multiplyScalar(GRENADE_THROW_SPEED);
+    projectile.velocity.y += 2.6;
+    projectile.life = 0;
+    projectile.exploded = false;
+    projectile.explodeLeft = 0;
+    projectile.explosion.visible = false;
     state.grenades -= 1;
     state.grenadeCooldown = GRENADE_THROW_GAP;
     return true;
   }
 
-  function explode(grenade, botItems, onKill) {
-    grenade.exploded = true;
-    grenade.explodeLeft = EXPLOSION_TIME;
-    grenade.explosion.visible = true;
-    grenade.explosion.position.copy(grenade.mesh.position);
-    for (const bot of botItems) {
-      if (!bot.alive) continue;
-      const distance = Math.hypot(
-        bot.group.position.x - grenade.mesh.position.x,
-        bot.group.position.y + 1 - grenade.mesh.position.y,
-        bot.group.position.z - grenade.mesh.position.z,
-      );
-      if (distance > GRENADE_RADIUS) continue;
-      const falloff = 1 - Math.min(1, distance / GRENADE_RADIUS);
-      const killed = botsDamage(bot, GRENADE_DAMAGE * (0.35 + 0.65 * falloff));
-      if (killed) onKill();
-    }
-  }
-
-  function botsDamage(bot, amount) {
+  function applyBotDamage(bot, amount) {
     bot.health -= amount;
     if (bot.health > 0) return false;
+
     bot.alive = false;
     bot.fall = 0;
     bot.flash.visible = false;
@@ -209,36 +239,63 @@ export function createArsenal(scene) {
     return true;
   }
 
+  function explode(projectile, botItems, onKill) {
+    projectile.exploded = true;
+    projectile.explodeLeft = EXPLOSION_TIME;
+    projectile.explosion.visible = true;
+    projectile.explosion.position.copy(projectile.mesh.position);
+
+    for (const bot of botItems) {
+      if (!bot.alive) continue;
+      const distance = Math.hypot(
+        bot.group.position.x - projectile.mesh.position.x,
+        bot.group.position.y + 1 - projectile.mesh.position.y,
+        bot.group.position.z - projectile.mesh.position.z,
+      );
+      if (distance > GRENADE_RADIUS) continue;
+
+      const falloff = 1 - Math.min(1, distance / GRENADE_RADIUS);
+      const damage = GRENADE_DAMAGE * (0.35 + 0.65 * falloff);
+      if (applyBotDamage(bot, damage)) onKill();
+    }
+  }
+
   function updateGrenades(dt, botItems, onKill) {
-    for (const grenade of grenades) {
-      if (grenade.explodeLeft > 0) {
-        grenade.explodeLeft = Math.max(0, grenade.explodeLeft - dt);
-        const blend = 1 - grenade.explodeLeft / EXPLOSION_TIME;
-        grenade.explosion.scale.setScalar(1 + blend * GRENADE_RADIUS);
-        grenade.explosion.material.opacity = 0.9 * (1 - blend);
-        if (grenade.explodeLeft === 0) grenade.mesh.visible = false;
+    for (const projectile of grenadeProjectiles) {
+      if (projectile.explodeLeft > 0) {
+        projectile.explodeLeft = Math.max(0, projectile.explodeLeft - dt);
+        const progress = 1 - projectile.explodeLeft / EXPLOSION_TIME;
+        projectile.explosion.scale.setScalar(1 + progress * GRENADE_RADIUS);
+        projectile.explosion.material.opacity = 0.9 * (1 - progress);
+        if (projectile.explodeLeft === 0) projectile.mesh.visible = false;
         continue;
       }
-      if (!grenade.mesh.visible || grenade.exploded) continue;
-      grenade.velocity.y -= GRENADE_GRAVITY * dt;
-      grenade.mesh.position.addScaledVector(grenade.velocity, dt);
-      grenade.life += dt;
-      if (grenade.mesh.position.y <= 0.09) {
-        grenade.mesh.position.y = 0.09;
-        grenade.velocity.y = Math.abs(grenade.velocity.y) * 0.38;
-        grenade.velocity.x *= 0.68;
-        grenade.velocity.z *= 0.68;
+
+      if (!projectile.mesh.visible || projectile.exploded) continue;
+      projectile.velocity.y -= GRENADE_GRAVITY * dt;
+      projectile.mesh.position.addScaledVector(projectile.velocity, dt);
+      projectile.life += dt;
+
+      if (projectile.mesh.position.y <= GRENADE_REST_HEIGHT) {
+        projectile.mesh.position.y = GRENADE_REST_HEIGHT;
+        projectile.velocity.y = Math.abs(projectile.velocity.y) * 0.38;
+        projectile.velocity.x *= 0.68;
+        projectile.velocity.z *= 0.68;
       }
-      if (grenade.life >= 2.2) explode(grenade, botItems, onKill);
+
+      if (projectile.life >= GRENADE_FUSE) {
+        explode(projectile, botItems, onKill);
+      }
     }
   }
 
   function updateBomb(dt, playerPosition, plantingHeld) {
     const bomb = state.bomb;
     bomb.outcome = '';
+
     if (!bomb.planted) {
-      const inside = playerPosition.distanceTo(BOMB_ZONE) <= BOMB_ZONE_RADIUS;
-      if (inside && plantingHeld) {
+      const insideZone = playerPosition.distanceTo(BOMB_ZONE) <= BOMB_ZONE_RADIUS;
+      if (insideZone && plantingHeld) {
         bomb.progress = Math.min(PLANT_TIME, bomb.progress + dt);
         if (bomb.progress === PLANT_TIME) {
           bomb.planted = true;
@@ -253,7 +310,8 @@ export function createArsenal(scene) {
     }
 
     bomb.fuse -= dt;
-    bombMarker.material.opacity = 0.12 + 0.12 * (0.5 + 0.5 * Math.sin(bomb.fuse * 9));
+    const pulse = 0.5 + 0.5 * Math.sin(bomb.fuse * 9);
+    bombMarker.material.opacity = 0.12 + 0.12 * pulse;
     if (bomb.fuse <= 0) {
       bomb.outcome = 'player';
       bomb.planted = false;

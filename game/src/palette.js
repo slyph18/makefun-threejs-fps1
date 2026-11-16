@@ -1,6 +1,6 @@
-// The look plan, in one place. Six values and one accent hue; the lighting makes every
-// shade the game needs, so no other colour appears in the code. The same six names are
-// the CSS custom properties in index.html.
+// Central design tokens shared by the renderer and CSS custom properties.
+// Lighting derives most in-world variation from these seven structural shades
+// plus one high-contrast accent.
 export const PALETTE = {
   canvas: '#dfe2d5',
   surface: '#39434d',
