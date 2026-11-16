@@ -126,7 +126,7 @@ function spawnRound() {
   hud.setLoadout(arsenal.current().name, arsenal.state.armor);
   hud.setHealth(body.health);
   hud.setMatch(rounds.state.round, rounds.state.playerWins, rounds.state.botWins, rounds.state.phase, 0);
-  hud.setRoundOutcome(rounds.state.lastRoundWinner, rounds.state.phase);
+  hud.setRoundOutcome(rounds.state.lastRoundWinner, rounds.state.phase, rounds.state.lastRoundSummary);
 }
 
 function onLockChange(locked) {
@@ -304,7 +304,7 @@ function updateHud() {
     Math.ceil(rounds.remainingTime()),
   );
   hud.setLoadout(arsenal.current().name, arsenal.state.armor);
-  hud.setRoundOutcome(rounds.state.lastRoundWinner, rounds.state.phase);
+  hud.setRoundOutcome(rounds.state.lastRoundWinner, rounds.state.phase, rounds.state.lastRoundSummary);
   const bomb = arsenal.state.bomb;
   if (rounds.state.phase === 'buy') {
     const seconds = Math.ceil(rounds.remainingTime());

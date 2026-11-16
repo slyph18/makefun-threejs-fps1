@@ -1,9 +1,10 @@
-// Match flow only: buy time, combat time, round outcomes and the first-to-three result.
-// main.js owns spawning; rounds.js only advances state and reports when a round resets.
-const BUY_TIME = 8;
-const COMBAT_TIME = 90;
-const ROUND_END_TIME = 1;
+// Match flow only: phase timing, round outcomes, and the first-to-three result. main.js
+// owns spawning; rounds.js advances state and publishes a one-line post-round summary.
+const BUY_TIME = 7;
+const COMBAT_TIME = 75;
+const ROUND_END_TIME = 1.4;
 const WIN_TARGET = 3;
+const BOTS_TOTAL = 4;
 
 export function createRounds() {
   const state = {
@@ -16,6 +17,7 @@ export function createRounds() {
     matchOver: false,
     winner: '',
     lastRoundWinner: '',
+    lastRoundSummary: '',
   };
 
   function beginRound() {
@@ -24,6 +26,7 @@ export function createRounds() {
     state.phaseTime = 0;
     state.roundReset = true;
     state.lastRoundWinner = '';
+    state.lastRoundSummary = '';
   }
 
   function beginMatch() {
@@ -34,12 +37,13 @@ export function createRounds() {
     beginRound();
   }
 
-  function finishRound(winner) {
+  function finishRound(winner, summary) {
     state.lastRoundWinner = winner;
     if (winner === 'player') state.playerWins += 1;
     else state.botWins += 1;
     state.phase = 'roundEnd';
     state.phaseTime = 0;
+    state.lastRoundSummary = summary;
   }
 
   function step(dt, playerAlive, botsRemaining, objectiveWinner = '', objectiveActive = false) {
@@ -52,10 +56,15 @@ export function createRounds() {
       return;
     }
     if (state.phase === 'combat') {
-      if (objectiveWinner) finishRound(objectiveWinner);
-      else if (botsRemaining === 0) finishRound('player');
-      else if (!objectiveActive && !playerAlive) finishRound('bots');
-      else if (!objectiveActive && state.phaseTime >= COMBAT_TIME) finishRound('bots');
+      if (objectiveWinner) {
+        finishRound(objectiveWinner, 'Detonation confirmed at Site A.');
+      } else if (botsRemaining === 0) {
+        finishRound('player', `Squad cleared — ${BOTS_TOTAL - botsRemaining}/4 bots down.`);
+      } else if (!objectiveActive && !playerAlive) {
+        finishRound('bots', 'Player eliminated before detonation.');
+      } else if (!objectiveActive && state.phaseTime >= COMBAT_TIME) {
+        finishRound('bots', 'Time expired — Site A holds.');
+      }
       return;
     }
     if (state.phase === 'roundEnd' && state.phaseTime >= ROUND_END_TIME) {

@@ -1,5 +1,8 @@
-// The map: two attack lanes linked by a central connector, with crate cover, a marked
-// bombsite and two stepped platforms. Every box is a collider and a surface a bullet stops on.
+// Steel Corridor uses three read bands:
+//   1. Two side lanes run north/south outside the dividers.
+//   2. A central connector crosses between them, with hard walls at its ends.
+//   3. Midfield and objective pockets break the longest fire lanes while leaving peeks.
+// Every cover box is both a collider and a ray-blocking surface.
 import * as THREE from 'three';
 import { PALETTE } from './palette.js';
 
@@ -232,7 +235,8 @@ export function createWorld(scene) {
   box(24.4, 4.6, 0.4, 0, 2.3, -12.2, 'wall');
   box(24.4, 4.6, 0.4, 0, 2.3, 12.2, 'wall');
 
-  // Lane dividers and central connector cover. The gaps leave both lanes and the connector clear.
+  // Lane walls frame the outer routes. The connector openings remain wide enough for flanks,
+  // but their end walls block a full cross-map shot through the center.
   box(0.5, 2.8, 7.0, -4.7, 1.4, -5.0, 'divider');
   box(0.5, 2.8, 7.0, 4.7, 1.4, -5.0, 'divider');
   box(0.5, 2.8, 6.0, -4.7, 1.4, 6.0, 'divider');
@@ -240,17 +244,24 @@ export function createWorld(scene) {
   box(3.0, 2.6, 0.5, 0, 1.3, -3.2, 'divider');
   box(3.0, 2.6, 0.5, 0, 1.3, 3.2, 'divider');
 
-  // Crates and corner cover: low enough to fight from, tall enough to break line of sight.
-  box(1.7, 1.1, 1.7, -7.0, 0.55, -1.0, 'crate');
-  box(1.7, 1.1, 1.7, 7.0, 0.55, -1.0, 'crate');
-  box(1.5, 1.0, 1.5, -7.9, 0.5, -9.2, 'crate');
-  box(1.5, 1.0, 1.5, 8.8, 0.5, -8.2, 'crate');
-  box(1.7, 1.1, 1.7, -1.5, 0.55, -5.6, 'crate');
-  box(1.7, 1.1, 1.7, 1.5, 0.55, 5.6, 'crate');
-  box(1.5, 1.0, 1.5, -6.2, 0.5, 8.4, 'crate');
-  box(1.5, 1.0, 1.5, 6.2, 0.5, 8.4, 'crate');
-  box(1.8, 0.75, 1.8, -3.5, 0.375, 1.0, 'crate');
-  box(1.8, 0.75, 1.8, 3.5, 0.375, -1.0, 'crate');
+  // Midfield pockets sit just off the lane walls. Their slight x/z offsets avoid mirrored
+  // sightlines and preserve clean peek corners from both connector openings.
+  box(1.7, 1.1, 1.7, -7.2, 0.55, -0.7, 'crate');
+  box(1.7, 1.1, 1.7, 7.2, 0.55, -0.7, 'crate');
+  box(1.8, 0.75, 1.8, -3.9, 0.375, 0.7, 'crate');
+  box(1.8, 0.75, 1.8, 3.9, 0.375, -0.7, 'crate');
+
+  // Spawn and rally cover is compact so the aprons stay readable and no crate pins either
+  // lane entrance against the surrounding wall.
+  box(1.5, 1.0, 1.5, -8.2, 0.5, -9.2, 'crate');
+  box(1.5, 1.0, 1.5, 8.8, 0.5, -8.0, 'crate');
+  box(1.5, 1.0, 1.5, -6.5, 0.5, 8.7, 'crate');
+  box(1.5, 1.0, 1.5, 6.5, 0.5, 8.7, 'crate');
+
+  // Objective-side cover trades a short approach angle for protection from long lane shots;
+  // the gaps at the connector keep each approach visible from at least one adjacent lane.
+  box(1.7, 1.1, 1.7, -1.2, 0.55, -5.9, 'crate');
+  box(1.7, 1.1, 1.7, 1.2, 0.55, 5.9, 'crate');
 
   // Two elevated firing positions. Ramps are stacks of shallow boxes, and the player's
   // step-up movement lets its box collision climb them cleanly without teleporting.
@@ -418,9 +429,9 @@ export function createWorld(scene) {
     shootables,
     group,
     cover: [
-      [-7.0, -1.0], [7.0, -1.0], [-7.9, -9.2], [8.8, -8.2],
-      [-1.5, -5.6], [1.5, 5.6], [-6.2, 8.4], [6.2, 8.4],
-      [-3.5, 1.0], [3.5, -1.0],
+      [-7.2, -0.7], [7.2, -0.7], [-3.9, 0.7], [3.9, -0.7],
+      [-8.2, -9.2], [8.8, -8.0], [-6.5, 8.7], [6.5, 8.7],
+      [-1.2, -5.9], [1.2, 5.9],
     ],
   };
 }

@@ -138,9 +138,10 @@ export function createHud() {
       clearTimeout(killTimer);
       killTimer = setTimeout(() => killToast.classList.remove('on'), 900);
     },
-    setRoundOutcome(winner, phase) {
+    setRoundOutcome(winner, phase, summary = '') {
       if (phase === 'roundEnd') {
-        roundOutcome.textContent = winner === 'player' ? 'Round Won' : 'Round Lost';
+        const outcome = winner === 'player' ? 'Round Won' : 'Round Lost';
+        roundOutcome.textContent = summary ? `${outcome} — ${summary}` : outcome;
         roundOutcome.classList.add('on', winner === 'player' ? 'player' : 'bots');
       } else {
         roundOutcome.classList.remove('on', 'player', 'bots');

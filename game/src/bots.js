@@ -1,5 +1,6 @@
-// Four enemy soldiers patrol fixed lane/connector routes, pause at waypoints, and seek cover
-// when hit, peek in controlled bursts, and push the objective as pressure rises.
+// Four enemy soldiers share lane capacity, retain individual reaction profiles, and score
+// cover by travel, threat alignment and squad occupancy. They still follow patrol routes,
+// peek in controlled bursts, and push the objective as pressure rises.
 import * as THREE from 'three';
 import { PALETTE } from './palette.js';
 
@@ -20,11 +21,16 @@ const COVER_DELAY = 0.72;
 const COVER_STANDOFF = 1.1;
 const PEEK_STANDOFF = 0.18;
 const COVER_MARGIN = 0.25;
-const REACTION_MIN = 0.3;
-const REACTION_RANGE = 0.3;
+const REACTION_MIN = 0.2;
+const REACTION_RANGE = 0.36;
 const ACCURACY_TIME = 2.2;
 const DUCK_SCALE = 0.58;
 const SEPARATION_RADIUS = 2.3;
+const SQUAD_TARGET_RADIUS = 3.1;
+const SQUAD_COVER_RADIUS = 1.65;
+const COVER_TRAVEL_COST = 0.042;
+const COVER_ALIGNMENT_COST = 1.05;
+const COVER_CROWD_COST = 2.6;
 const HEAD_DAMAGE = 100;
 const BODY_DAMAGE = 34;
 const SHOT_DAMAGE = 17;
@@ -43,6 +49,10 @@ const PUSH_POINTS = [
   [-5.4, -6.0],
   [-8.6, -3.4],
 ];
+
+// Route identities and squad slots stay distinct: two bots may use the same broad side,
+// but their push destinations and waypoint hold times remain staggered.
+const LANES = ['outer-left', 'inner-left', 'inner-right', 'outer-right'];
 
 const ROUTES = [
   [
@@ -178,8 +188,11 @@ export function createBots(scene, random) {
       flash,
       spawnX,
       spawnZ,
+      lane: LANES[index],
       route: ROUTES[index],
       routeIndex: 1,
+      pushTargetIndex: -1,
+      reactionBase: REACTION_MIN + random() * REACTION_RANGE,
       walkCycle: 0,
       losLeft: index * LOS_INTERVAL,
       detect: 0,
@@ -217,16 +230,20 @@ export function createBots(scene, random) {
       item.coverLeft = 0;
       item.seenTime = 0;
 
-      let bestDistance = Number.POSITIVE_INFINITY;
+      const incomingLength = Math.hypot(incomingX, incomingZ);
+      const threatX = incomingLength > 0.001 ? incomingX / incomingLength : 1;
+      const threatZ = incomingLength > 0.001 ? incomingZ / incomingLength : 0;
+      let bestScore = Number.POSITIVE_INFINITY;
       for (const [crateX, crateZ] of cover) {
         const towardCrateX = crateX - item.group.position.x;
         const towardCrateZ = crateZ - item.group.position.z;
-        const crateDot = towardCrateX * incomingX + towardCrateZ * incomingZ;
-        if (crateDot <= COVER_MARGIN) continue;
+        const crateDistance = Math.hypot(towardCrateX, towardCrateZ);
+        if (crateDistance <= 0.001) continue;
+        const crateAlignment = (towardCrateX * threatX + towardCrateZ * threatZ) / crateDistance;
+        if (crateAlignment <= COVER_MARGIN) continue;
+        const hiddenX = crateX - threatX * COVER_STANDOFF;
+        const hiddenZ = crateZ - threatZ * COVER_STANDOFF;
         const distance = towardCrateX * towardCrateX + towardCrateZ * towardCrateZ;
-        if (distance >= bestDistance) continue;
-        const hiddenX = crateX - incomingX * COVER_STANDOFF;
-        const hiddenZ = crateZ - incomingZ * COVER_STANDOFF;
         if (visibleBetween(
           playerState.position.x,
           playerState.position.y + playerState.eye,
@@ -236,13 +253,23 @@ export function createBots(scene, random) {
           hiddenZ,
           shootables,
         )) continue;
-        bestDistance = distance;
+        let crowdCost = 0;
+        for (const other of items) {
+          if (other === item || !other.alive) continue;
+          const claimed = Math.hypot(other.coverTargetX - hiddenX, other.coverTargetZ - hiddenZ);
+          crowdCost = Math.max(crowdCost, Math.max(0, 1 - claimed / SQUAD_COVER_RADIUS));
+        }
+        const travelCost = Math.sqrt(distance) * COVER_TRAVEL_COST;
+        const alignmentCost = (1 - crateAlignment) * COVER_ALIGNMENT_COST;
+        const score = travelCost + alignmentCost + crowdCost * COVER_CROWD_COST;
+        if (score >= bestScore) continue;
+        bestScore = score;
         item.coverTargetX = hiddenX;
         item.coverTargetZ = hiddenZ;
         item.peekTargetX = crateX - incomingX * PEEK_STANDOFF;
         item.peekTargetZ = crateZ - incomingZ * PEEK_STANDOFF;
       }
-      if (!Number.isFinite(bestDistance)) item.coverState = 'route';
+      if (!Number.isFinite(bestScore)) item.coverState = 'route';
       return false;
     }
     item.alive = false;
@@ -321,6 +348,45 @@ export function createBots(scene, random) {
     if (item.coverState === 'peek') item.burstLeft -= 1;
   }
 
+  function pickSquadPushTarget(item) {
+    let bestScore = Number.POSITIVE_INFINITY;
+    let bestIndex = item.pushIndex;
+    for (let offset = 0; offset < PUSH_POINTS.length; offset += 1) {
+      const candidateIndex = (item.pushIndex + offset) % PUSH_POINTS.length;
+      const [targetX, targetZ] = PUSH_POINTS[candidateIndex];
+      const travel = Math.hypot(targetX - item.group.position.x, targetZ - item.group.position.z);
+      let crowdCost = 0;
+      for (const other of items) {
+        if (other === item || !other.alive || other.pushTargetIndex < 0) continue;
+        if (other.pushTargetIndex === candidateIndex) {
+          crowdCost = Math.max(crowdCost, 1);
+          continue;
+        }
+        const [otherX, otherZ] = PUSH_POINTS[other.pushTargetIndex];
+        const spread = Math.hypot(otherX - targetX, otherZ - targetZ);
+        crowdCost = Math.max(crowdCost, Math.max(0, 1 - spread / SQUAD_TARGET_RADIUS));
+      }
+      const routePreference = candidateIndex === item.pushIndex ? 0 : 0.16;
+      const score = travel * 0.08 + crowdCost * 2.4 + routePreference;
+      if (score < bestScore) {
+        bestScore = score;
+        bestIndex = candidateIndex;
+      }
+    }
+    item.pushTargetIndex = bestIndex;
+    return PUSH_POINTS[bestIndex];
+  }
+
+  function waypointHold(item) {
+    let hold = HOLD_MIN + random() * HOLD_EXTRA;
+    for (const other of items) {
+      if (other === item || !other.alive || other.coverState !== 'route') continue;
+      const distance = Math.hypot(other.group.position.x - item.group.position.x, other.group.position.z - item.group.position.z);
+      if (other.lane === item.lane && distance < SQUAD_TARGET_RADIUS) hold *= 1.35;
+    }
+    return hold;
+  }
+
   function step(dt, playerState, shootables, combatActive, onPlayerHit, cover, effects, roundPressure, audio) {
     for (const item of items) {
       if (!item.alive) {
@@ -359,7 +425,7 @@ export function createBots(scene, random) {
           item.coverState = 'seek';
         }
       } else if (roundPressure >= item.pushAt) {
-        const target = PUSH_POINTS[item.pushIndex];
+        const target = item.pushTargetIndex < 0 ? pickSquadPushTarget(item) : PUSH_POINTS[item.pushTargetIndex];
         moveX = target[0] - item.group.position.x;
         moveZ = target[1] - item.group.position.z;
         if (Math.hypot(moveX, moveZ) < ARRIVE_DISTANCE) {
@@ -372,7 +438,7 @@ export function createBots(scene, random) {
         moveZ = target[1] - item.group.position.z;
         const targetDistance = Math.hypot(moveX, moveZ);
         if (targetDistance < ARRIVE_DISTANCE) {
-          item.holdLeft = HOLD_MIN + random() * HOLD_EXTRA;
+          item.holdLeft = waypointHold(item);
           moveX = 0;
           moveZ = 0;
         }
@@ -427,7 +493,10 @@ export function createBots(scene, random) {
         item.losLeft = LOS_INTERVAL;
         const visible = combatActive && playerState.health > 0 && hasLineOfSight(item, playerState, shootables);
         if (visible) {
-          if (item.detect === 0) item.reactLeft = REACTION_MIN + random() * REACTION_RANGE;
+          if (item.detect === 0) {
+            item.reactLeft = item.reactionBase * (0.85 + random() * 0.3)
+              + (1 - item.health / HEALTH) * 0.12;
+          }
           item.detect = Math.min(DETECT_TIME, item.detect + LOS_INTERVAL);
           item.seenTime = Math.min(ACCURACY_TIME + 1, item.seenTime + LOS_INTERVAL);
         } else {
@@ -491,6 +560,8 @@ export function createBots(scene, random) {
       item.duck = 0;
       item.seenTime = 0;
       item.burstLeft = 0;
+      item.pushTargetIndex = -1;
+      item.reactionBase = REACTION_MIN + random() * REACTION_RANGE;
       item.coverTargetX = item.spawnX;
       item.coverTargetZ = item.spawnZ;
       item.peekTargetX = item.spawnX;
